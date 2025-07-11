@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   serverExternalPackages: ['@prisma/client'],
-  // Configure for Cloud Run deployment
+  // Configure for deployment
   output: 'standalone',
   // Disable strict mode for deployment
   eslint: {
