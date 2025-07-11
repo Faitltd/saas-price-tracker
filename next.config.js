@@ -1,6 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   serverExternalPackages: ['@prisma/client'],
+  // Configure for Cloud Run deployment
+  output: 'standalone',
   images: {
     domains: [
       'localhost',
@@ -11,6 +13,7 @@ const nextConfig = {
   },
   env: {
     CUSTOM_KEY: process.env.CUSTOM_KEY,
+    PORT: process.env.PORT || '8080',
   },
   async headers() {
     return [
