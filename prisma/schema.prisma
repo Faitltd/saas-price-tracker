@@ -1,0 +1,470 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enums
+enum UserRole {
+  USER
+  ADMIN
+  MODERATOR
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+  ONE_TIME
+  USAGE_BASED
+  CUSTOM
+}
+
+enum ScrapingStatus {
+  PENDING
+  IN_PROGRESS
+  SUCCESS
+  FAILED
+  RATE_LIMITED
+}
+
+enum AlertType {
+  PRICE_INCREASE
+  PRICE_DECREASE
+  NEW_FEATURE
+  PLAN_DISCONTINUED
+  DEAL_AVAILABLE
+  RENEWAL_REMINDER
+}
+
+enum NotificationType {
+  EMAIL
+  SMS
+  SLACK
+  TEAMS
+  PUSH
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  DELIVERED
+}
+
+// User Management
+model User {
+  id                    String   @id @default(cuid())
+  email                 String   @unique
+  password              String
+  name                  String?
+  avatar                String?
+  role                  UserRole @default(USER)
+  isEmailVerified       Boolean  @default(false)
+  emailVerificationToken String?
+  resetPasswordToken    String?
+  resetPasswordExpires  DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Relationships
+  subscriptions         UserSubscription[]
+  trackedPlans          UserTrackedPlan[]
+  alerts                PriceAlert[]
+  reviews               CommunityReview[]
+  sharedDiscounts       SharedDiscount[]
+  notifications         Notification[]
+  preferences           UserPreference?
+
+  @@map("users")
+}
+
+model UserPreference {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Notification preferences
+  emailNotifications    Boolean  @default(true)
+  smsNotifications      Boolean  @default(false)
+  slackNotifications    Boolean  @default(false)
+  teamsNotifications    Boolean  @default(false)
+
+  // Alert preferences
+  priceIncreaseAlerts   Boolean  @default(true)
+  priceDecreaseAlerts   Boolean  @default(true)
+  newFeatureAlerts      Boolean  @default(true)
+  dealAlerts            Boolean  @default(true)
+  renewalReminders      Boolean  @default(true)
+
+  // Contact info for notifications
+  phoneNumber           String?
+  slackWebhookUrl       String?
+  teamsWebhookUrl       String?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("user_preferences")
+}
+
+// SaaS Product Management
+model SaasProduct {
+  id                    String   @id @default(cuid())
+  name                  String
+  slug                  String   @unique
+  description           String?
+  website               String
+  logoUrl               String?
+  category              String
+  subcategory           String?
+
+  // External API data
+  g2CrowdId             String?
+  capterraId            String?
+
+  // Metadata
+  isActive              Boolean  @default(true)
+  lastScraped           DateTime?
+  scrapingStatus        ScrapingStatus @default(PENDING)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Relationships
+  plans                 PricingPlan[]
+  reviews               CommunityReview[]
+  alternatives          SaasAlternative[] @relation("ProductAlternatives")
+  alternativeOf         SaasAlternative[] @relation("AlternativeProducts")
+  sharedDiscounts       SharedDiscount[]
+  deals                 Deal[]
+
+  @@map("saas_products")
+}
+
+model PricingPlan {
+  id                    String   @id @default(cuid())
+  productId             String
+  product               SaasProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  name                  String
+  slug                  String
+  description           String?
+  features              Json?    // Array of features
+  billingCycle          BillingCycle
+  isPopular             Boolean  @default(false)
+  isCustom              Boolean  @default(false)
+
+  // Pricing info
+  currentPrice          Decimal?
+  currency              String   @default("USD")
+  freeTrialDays         Int?
+  hasFreeTier           Boolean  @default(false)
+
+  // Metadata
+  isActive              Boolean  @default(true)
+  displayOrder          Int      @default(0)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Relationships
+  priceHistory          PriceSnapshot[]
+  trackedBy             UserTrackedPlan[]
+  userSubscriptions     UserSubscription[]
+  alerts                PriceAlert[]
+
+  @@unique([productId, slug])
+  @@map("pricing_plans")
+}
+
+// Price Tracking
+model PriceSnapshot {
+  id                    String   @id @default(cuid())
+  planId                String
+  plan                  PricingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  price                 Decimal
+  currency              String   @default("USD")
+  features              Json?    // Features at time of snapshot
+
+  // Change detection
+  priceChange           Decimal? // Difference from previous price
+  priceChangePercent    Decimal? // Percentage change
+
+  // Metadata
+  scrapedAt             DateTime @default(now())
+  source                String   @default("web_scraping")
+
+  createdAt             DateTime @default(now())
+
+  @@map("price_snapshots")
+}
+
+// User Subscription Management
+model UserSubscription {
+  id                    String   @id @default(cuid())
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId                String
+  plan                  PricingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  // Subscription details
+  currentPrice          Decimal
+  currency              String   @default("USD")
+  billingCycle          BillingCycle
+
+  // Dates
+  startDate             DateTime
+  renewalDate           DateTime?
+  cancelledAt           DateTime?
+
+  // External integration
+  stripeSubscriptionId  String?
+  chargebeeSubscriptionId String?
+
+  // Usage tracking
+  monthlySpend          Decimal?
+  yearlySpend           Decimal?
+
+  isActive              Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("user_subscriptions")
+}
+
+model UserTrackedPlan {
+  id                    String   @id @default(cuid())
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId                String
+  plan                  PricingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  // Tracking preferences
+  alertOnPriceIncrease  Boolean  @default(true)
+  alertOnPriceDecrease  Boolean  @default(true)
+  alertOnNewFeatures    Boolean  @default(true)
+  alertOnDeals          Boolean  @default(true)
+
+  // Target price for alerts
+  targetPrice           Decimal?
+
+  isActive              Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([userId, planId])
+  @@map("user_tracked_plans")
+}
+
+// Alert System
+model PriceAlert {
+  id                    String   @id @default(cuid())
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId                String
+  plan                  PricingPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  alertType             AlertType
+  title                 String
+  message               String
+
+  // Price change details
+  oldPrice              Decimal?
+  newPrice              Decimal?
+  priceChange           Decimal?
+  priceChangePercent    Decimal?
+
+  // Alert status
+  isRead                Boolean  @default(false)
+  isSent                Boolean  @default(false)
+  sentAt                DateTime?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("price_alerts")
+}
+
+model Notification {
+  id                    String   @id @default(cuid())
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  type                  NotificationType
+  status                NotificationStatus @default(PENDING)
+
+  title                 String
+  message               String
+  data                  Json?    // Additional notification data
+
+  // Delivery details
+  sentAt                DateTime?
+  deliveredAt           DateTime?
+  failureReason         String?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("notifications")
+}
+
+// Community Features
+model CommunityReview {
+  id                    String   @id @default(cuid())
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId             String
+  product               SaasProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  rating                Int      // 1-5 stars
+  title                 String
+  content               String
+
+  // Helpful votes
+  helpfulVotes          Int      @default(0)
+  totalVotes            Int      @default(0)
+
+  // Moderation
+  isApproved            Boolean  @default(false)
+  isHidden              Boolean  @default(false)
+  moderatedAt           DateTime?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("community_reviews")
+}
+
+model SharedDiscount {
+  id                    String   @id @default(cuid())
+  userId                String
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId             String?
+  product               SaasProduct? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  title                 String
+  description           String
+  discountCode          String?
+  discountUrl           String?
+  discountPercent       Decimal?
+  discountAmount        Decimal?
+
+  // Validity
+  validFrom             DateTime?
+  validUntil            DateTime?
+  isVerified            Boolean  @default(false)
+  verifiedAt            DateTime?
+
+  // Usage tracking
+  usageCount            Int      @default(0)
+  maxUsage              Int?
+
+  // Moderation
+  isApproved            Boolean  @default(false)
+  isHidden              Boolean  @default(false)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("shared_discounts")
+}
+
+// Deal Discovery
+model Deal {
+  id                    String   @id @default(cuid())
+  productId             String?
+  product               SaasProduct? @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  title                 String
+  description           String
+  dealUrl               String
+  originalPrice         Decimal?
+  discountedPrice       Decimal?
+  discountPercent       Decimal?
+
+  // Source information
+  source                String   // e.g., "retailmenot", "honey", "manual"
+  sourceId              String?  // External ID from source
+
+  // Validity
+  validFrom             DateTime?
+  validUntil            DateTime?
+  isActive              Boolean  @default(true)
+
+  // Engagement
+  viewCount             Int      @default(0)
+  clickCount            Int      @default(0)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("deals")
+}
+
+// Product Alternatives
+model SaasAlternative {
+  id                    String   @id @default(cuid())
+  productId             String
+  product               SaasProduct @relation("ProductAlternatives", fields: [productId], references: [id], onDelete: Cascade)
+  alternativeId         String
+  alternative           SaasProduct @relation("AlternativeProducts", fields: [alternativeId], references: [id], onDelete: Cascade)
+
+  // Comparison metrics
+  similarityScore       Decimal? // 0-1 similarity score
+  priceComparison       String?  // "cheaper", "similar", "expensive"
+  featureComparison     Json?    // Feature comparison data
+
+  // Community input
+  upvotes               Int      @default(0)
+  downvotes             Int      @default(0)
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([productId, alternativeId])
+  @@map("saas_alternatives")
+}
+
+// API Integration Logs
+model ApiLog {
+  id                    String   @id @default(cuid())
+  service               String   // "g2_crowd", "capterra", "openai", etc.
+  endpoint              String
+  method                String
+
+  // Request/Response
+  requestData           Json?
+  responseData          Json?
+  statusCode            Int?
+
+  // Performance
+  responseTime          Int?     // milliseconds
+
+  // Error handling
+  isSuccess             Boolean  @default(true)
+  errorMessage          String?
+
+  createdAt             DateTime @default(now())
+
+  @@map("api_logs")
+}
+
+// System Configuration
+model SystemConfig {
+  id                    String   @id @default(cuid())
+  key                   String   @unique
+  value                 String
+  description           String?
+
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@map("system_config")
+}
