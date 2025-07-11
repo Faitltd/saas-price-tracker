@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { mockProducts } from '@/lib/mock-data'
 import { ApiResponse, PaginatedResponse } from '@/types'
 
 export async function GET(request: NextRequest) {
@@ -28,28 +28,22 @@ export async function GET(request: NextRequest) {
       ]
     }
 
-    // Get products with plans
-    const [products, total] = await Promise.all([
-      prisma.saasProduct.findMany({
-        where,
-        include: {
-          plans: {
-            where: { isActive: true },
-            orderBy: { displayOrder: 'asc' },
-            include: {
-              priceHistory: {
-                orderBy: { createdAt: 'desc' },
-                take: 1,
-              },
-            },
-          },
-        },
-        orderBy: { name: 'asc' },
-        skip,
-        take: limit,
-      }),
-      prisma.saasProduct.count({ where }),
-    ])
+    // Filter mock products
+    let filteredProducts = mockProducts
+
+    if (category) {
+      filteredProducts = filteredProducts.filter(p => p.category === category)
+    }
+
+    if (search) {
+      filteredProducts = filteredProducts.filter(p =>
+        p.name.toLowerCase().includes(search.toLowerCase()) ||
+        p.description?.toLowerCase().includes(search.toLowerCase())
+      )
+    }
+
+    const total = filteredProducts.length
+    const products = filteredProducts.slice(skip, skip + limit)
 
     const response: PaginatedResponse<typeof products[0]> = {
       success: true,
@@ -76,25 +70,21 @@ export async function GET(request: NextRequest) {
 // Get categories for filtering
 export async function OPTIONS() {
   try {
-    const categories = await prisma.saasProduct.groupBy({
-      by: ['category'],
-      where: { isActive: true },
-      _count: { category: true },
-      orderBy: { category: 'asc' },
-    })
+    const categories = Array.from(new Set(mockProducts.map(p => p.category)))
+      .map(category => ({
+        name: category,
+        count: mockProducts.filter(p => p.category === category).length,
+      }))
 
     const response: ApiResponse = {
       success: true,
-      data: categories.map(cat => ({
-        name: cat.category,
-        count: cat._count.category,
-      })),
+      data: categories,
     }
 
     return Response.json(response)
   } catch (error) {
     console.error('Categories API error:', error)
-    
+
     return Response.json(
       { success: false, error: 'Failed to fetch categories' },
       { status: 500 }
